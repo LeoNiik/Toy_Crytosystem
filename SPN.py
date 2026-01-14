@@ -37,7 +37,7 @@ class GoonChipher:
         self.blockLen = m * l // 8 # bytes
         self.nRounds = nRounds 
         self.masterKey = masterKey
-        self.keys = keySchedule(masterKey, nRounds, l*m)
+        self.keys = keySchedule(masterKey, nRounds+1, l*m)
         self.Pip, self.Pis = get_permutation_function(self.l, self.m) # Permutation
         self.invPis = {v: k for k, v in self.Pis.items()}
 
@@ -102,10 +102,6 @@ class GoonChipher:
 
         return self.pack(out_bits, 8)
 
-
-
-
-        
     def inverseRoundPerm(self, block):
         bits = self.unpack(block)
         total_bits = self.l * self.m
@@ -135,16 +131,24 @@ class GoonChipher:
         v = [bytes(0) for _ in range(self.nRounds)]
         w = [bytes(0) for _ in range(self.nRounds)]
         
+        # First round
         u[0] = bytes( a ^ b for a,b in zip(block,self.keys[0]))
         v[0] = self.S_box(u[0])
         w[0] = self.roundPerm(v[0])
         
-        for r in range(1,self.nRounds):
+        # Middle rounds
+        for r in range(1,self.nRounds - 1):
             u[r] = bytes( a ^ b for a,b in zip(w[r-1],self.keys[r]))
             v[r] = self.S_box(u[r])
             w[r] = self.roundPerm(v[r])
-        
-        return w[r]
+
+        # Last Round no permutation double XOR
+        max_r = self.nRounds-1
+        u[max_r] = bytes( a ^ b for a,b in zip(w[max_r-1],self.keys[max_r]))
+        v[max_r] = self.S_box(u[max_r])
+        y = bytes( a ^ b for a,b in zip(v[max_r],self.keys[max_r+1]))
+
+        return y
     
     def Encrypt(self, p):
 
@@ -166,13 +170,20 @@ class GoonChipher:
         u = [bytes(0) for _ in range(self.nRounds)]
         v = [bytes(0) for _ in range(self.nRounds)]
         w = [bytes(0) for _ in range(self.nRounds)]
-        
-        w[self.nRounds -1] = block
-        for r in range(self.nRounds - 1, 0, -1):
+
+        # Last round
+        max_r = self.nRounds-1
+        v[max_r] = bytes( a ^ b for a,b in zip(block,self.keys[max_r+1]))
+        u[max_r] = self.inverseS_box(v[max_r])
+        w[max_r-1] = bytes( a ^ b for a,b in zip(u[max_r],self.keys[max_r]))
+
+        # Middle rounds
+        for r in range(max_r - 1, 0, -1):
             v[r] = self.inverseRoundPerm(w[r])
             u[r] = self.inverseS_box(v[r])
             w[r - 1] = bytes( a ^ b for a,b in zip(u[r],self.keys[r]))
 
+        # First round
         v[0] = self.inverseRoundPerm(w[0])
         u[0] = self.inverseS_box(v[0])
         p = bytes( a ^ b for a,b in zip(u[0],self.keys[0]))
@@ -232,9 +243,8 @@ def test(args):
     l = 32
     m = 16
     nr = 4
-    chipher = GoonChipher(l,m,nr,1246)
-    benchmark(chipher, args)
     
+    chipher = GoonChipher(l,m,nr,1246)
     b = bytes([random.getrandbits(8) for _ in range((l*m)//8)])
 
     assert chipher.pack(chipher.unpack(b), 8) == b
@@ -244,6 +254,8 @@ def test(args):
     assert (chipher.inverseRoundPerm(chipher.roundPerm(b)) == b)
     
     assert (chipher.Decrypt(chipher.Encrypt(b)) == b)
+    
+    benchmark(chipher, args)
     exit(0)
 
 if __name__ == "__main__":
@@ -256,6 +268,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # test(args)
+    # LAT_construct()
     main(args)
     exit(0)
 
