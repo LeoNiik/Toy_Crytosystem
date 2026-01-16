@@ -1,3 +1,6 @@
+#!/usr/bin/python
+
+from SPN import *
 import sys
 
 # --- 1. MOCK IMPORTS ---
@@ -6,6 +9,21 @@ def get_permutation_function(m, n):
     sbox_dict = {0: 11, 1: 8, 2: 14, 3: 10, 4: 4, 5: 6, 6: 15, 7: 12, 8: 5, 9: 13, 10: 7, 11: 1, 12: 9, 13: 2, 14: 0, 15: 3}
     return pbox, sbox_dict
 # --- FINE MOCK ---
+def get_inverse_permutation_function(m, n):
+    # Otteniamo le tabelle originali (forward)
+    forward_pbox, forward_sbox = get_permutation_function(m, n)
+    
+    # Invertiamo dizionari scambiando chiavi (k) e valori (v)
+    # Usiamo sorted() per restituire un dizionario ordinato per chiave (0, 1, 2...)
+    inv_pbox = {v: k for k, v in forward_pbox.items()}
+    inv_sbox = {v: k for k, v in forward_sbox.items()}
+    
+    # Ordiniamo per leggibilità (opzionale, ma utile per debug)
+    inv_pbox = dict(sorted(inv_pbox.items()))
+    inv_sbox = dict(sorted(inv_sbox.items()))
+    
+    return inv_pbox, inv_sbox
+
 
 def LAT_construct():
     pbox, sbox_dict = get_permutation_function(4, 4)
@@ -138,11 +156,100 @@ def find_trail(nRounds):
 
     total_bias = 1/2 - total_bias*pow(2, n-1)
     print(f"\n=== RISULTATO FINALE (Round {nRounds}) ===")
+
+    last_sboxes = []
     for s in sboxes[nRounds]:
         if s.mask_in > 0:
             print(f"SBOX {s.c} Input Mask: {s.mask_in} ({s.mask_in:04b})")
-    return total_bias
+            last_sboxes.append(s)
+
+    return total_bias, last_sboxes
+
+
+
+def get4bits(b, c):
+    return bytes([(int.from_bytes(b) >> (4-c-1)*4) & 0x000f]) 
+
+
 def main():
-    print(find_trail(3)) # 3 Round come nel tuo esempio
+    trail_bias, active_boxes = find_trail(3) # 3 Round come nel tuo esempio
+
+    inv_pbox, inv_sbox = get_inverse_permutation_function(4,4)
+    
+    chipher = GoonChipher(4,4,4,313)
+    pc_pairs = []
+
+    for i in range(12000):
+        p = bytes([random.getrandbits(8) for _ in range((4*4)//8)])
+        c = chipher.Encrypt(p)
+        pc_pairs.append((p,c))
+
+
+    start_box_idx = 1
+    start_mask = 12 
+    
+    bit4_subkeys = [i for i in range(2**4)]
+
+    n = len(active_boxes)
+
+    import itertools
+
+    # Range da 0 a 15 (2^4)
+    bit4_subkeys = range(16) 
+
+    # Supponiamo tu abbia 3 active boxes per l'esempio
+    n = len(active_boxes) 
+
+    count = {}
+    print("LAST KEY:", bin(int.from_bytes(chipher.keys[4]) & 0x00ff))
+    # 1101
+    # 0    4    8    12
+    # 0000 0000 0010 0001
+
+    for current_keys in itertools.product(bit4_subkeys, repeat=n):
+        count[current_keys] = 0
+        for pair in pc_pairs:
+            # tupla (0, .., 1) n values
+            p = get4bits(pair[0], 1)
+            # fro is a byte (4 bits) of the plaintext where start_mask is applied 
+            fro = bytes( a & b for a,b in zip(p, start_mask.to_bytes()))
+
+            parity_plaintext = bin(int.from_bytes(fro)).count('1') % 2
+            u = [bytes(0) for _ in range(4)]
+            
+
+            for i,sbox in enumerate(active_boxes):
+                # 1 is arbitrary given our trail
+                c = get4bits(pair[1], sbox.c)
+                v = bytes( a ^ b for a,b in zip(c, current_keys[i].to_bytes()))
+
+                # TomFoolery
+                tmp = v[0] & 0xf
+                
+                tmp_u = bytes([inv_sbox[tmp]])
+                
+                u[sbox.c] = tmp_u
+                u[sbox.c] = bytes( a & b for a,b in zip(u[sbox.c], sbox.mask_in.to_bytes()))
+
+                # print(v, u)
+                # print(p, start_mask.to_bytes(), fro) 
+            
+            u_parity = 0 
+            for t in u:
+                u_parity += bin(int.from_bytes(t)).count('1')
+            u_parity %= 2
+            # print(u_parity, parity_plaintext)
+            if (u_parity == parity_plaintext):
+                count[current_keys] += 1
+
+    count = dict(sorted(count.items(), key=lambda item: item[1]))
+    print(count)  
+                   
+                
+                
+                
+                
+             
+            
 
 main()
